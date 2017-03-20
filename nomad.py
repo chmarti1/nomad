@@ -1,8 +1,7 @@
 #!/usr/bin/python
 
 import requests
-import sys, os
-import time
+import sys, os, time
 import getopt
 
 version = '1.0.0'
@@ -22,6 +21,7 @@ clopt_flags = {x[0]:x[1] for x in clopt[0]}
 if '-h' in clopt_flags or '--help' in clopt_flags:
     sys.stdout.write("""
 NOMAD dynamic DNS update service for ZoneEdit
+v""" + version + """
 
 Checks the system's current IP address with a call to ipinfo.io and 
 compares it against the last known value.  If there has been a change,
@@ -131,7 +131,7 @@ def set_config(dopt, opt=[]):
             config_dict[dopt] = clopt_flags[found]
 
 
-        
+
 # First, assign the config file if it is present in the CL options.    
 set_config('config',['-c','--config'])
 
@@ -148,11 +148,11 @@ if os.access(config_file, os.R_OK):
     except:
         sys.stderr.write('Invalid configuration file.\n')
         sys.stderr.write(sys.exc_info()[1].message)
-        exit(1)
+        exit(-1)
 
 else:
     sys.stderr.write('Could not open configuration file: ' + config_file)
-    exit(1)
+    exit(-1)
 
 # Now read in the rest of the command line arguments.  Putting them second
 # allows them to override the config file.
@@ -170,6 +170,9 @@ cache_dir = config_dict['cachedir']
 log_file = os.path.join(config_dict['cachedir'],'log')
 ip_file = os.path.join(config_dict['cachedir'],'ip')
 verbose = bool(config_dict['verbose'])
+debug = bool(config_dict['debug'])
+force = bool(config_dict['force'])
+timefmt = config_dict['timefmt']
 
 # Before we go mucking about with files, be verbose to help with any debugging
 # in case something breaks accessing the cache files
@@ -192,121 +195,161 @@ Force update: %s
 cache_ip = (-1,-1,-1,-1)
 web_ip = (-1,-1,-1,-1)
 
+# Check the log file.  Failure to write to the log file is lethal.
+if not os.access(log_file, os.R_OK):
+    sys.stderr.write('Failed to open the log file: %s\n'%log_file)
+    exit(-1)
 
-# Attempt to get the system's current ip address from ipinfo.io
-IP_WEB_FAIL = False
-IP_WEB_MEESSAGE = ''
-if verbose:
-    sys.stdout.write("Checking current ip...")
-try:
-    # Issue the web request.  Failure raises an exception caught by try:except
-    page = requests.get('http://ipinfo.io')
-    # Extract the IP address
-    iptext = page.json()['ip']
-except:
-    IP_WEB_FAIL = True
-    IP_WEB_MESSAGE = sys.exc_info()[1].message
-
-# If everything is going well, then convert the text into a tuple of integers
-if not IP_WEB_FAIL and page.status_code >= 200 and page.status_code <= 299:
+with open(log_file, 'a') as logf:
+    # Attempt to get the system's current ip address from ipinfo.io
+    IP_WEB_FAIL = False
+    IP_WEB_MEESSAGE = ''
+    if verbose:
+        sys.stdout.write("Checking current ip...")
     try:
-        web_ip = tuple([int(this) for this in iptext.split('.')])
-        if len(web_ip)!=4:
-            raise Exception()
+        # Issue the web request.  Failure raises an exception caught by try
+        page = requests.get('http://ipinfo.io')
+        # Extract the IP address
+        iptext = page.json()['ip']
     except:
         IP_WEB_FAIL = True
-        IP_WEB_MESSAGE = "Found nonsense IP address: %s"%iptext
-else:
-    IP_WEB_FAIL = True
-    IP_WEB_MESSAGE = ip_page.content
+        IP_WEB_MESSAGE = sys.exc_info()[1].message
 
-if verbose:
-    if IP_WEB_FAIL:
-        sys.stdout.write("[FAILED]\n")
-    else:
-        sys.stdout.write(iptext + "\n")
-
-
-# Get the Former IP address from the cached IP file
-IP_CACHE_FAIL = False
-IP_CACHE_MESSAGE = ''
-IP_CHANGE = False
-if verbose:
-    sys.stdout.write("Checking cached IP address...")
-# Does the ip cache file exist?
-if os.access(ip_file,os.F_OK):
-    try:
-        # Read the old IP address and convert it into a tuple
-        with open(ip_file,'r') as ff:
-            iptext = ff.read()
-        cache_ip = tuple([int(this) for this in iptext.split('.')])
-    except:
-        IP_CACHE_FAIL = True
-        IP_CACHE_MESSAGE = 'Failed to open file %s'%ip_file
-        
-    # Compare the new IP to the old IP
-    if not (IP_WEB_FAIL or IP_CACHE_FAIL):
-        IP_CHANGE = cache_ip != web_ip
-        
-# If there is no IP history, then default to a change
-else:
-    IP_CHANGE = True
-
-if verbose:
-    if IP_CACHE_FAIL:
-        sys.stdout.write("[FAILED]\n")
-    else:
-        sys.stdout.write(iptext + '\n')
-    if IP_CHANGE:
-        sys.stdout.write("CHANGE DETECTED\n")
-
-
-# Update the cache IP address
-IP_UPDATE_FAIL = False
-IP_UPDATE_MESSAGE = ''
-# Update the IP file ONLY if there is something meaningful to put in its place
-if IP_CHANGE and not IP_WEB_FAIL:
-    if verbose:
-        sys.stdout.write("Updating IP cache...")
-    try:
-        with open(ip_file,'w') as ff:
-            ff.write('%d.%d.%d.%d'%web_ip)
-    except:
-        IP_UPDATE_FAIL = True
-        IP_UPDATE_MESSAGE = 'Failed to write IP cache %s'%ip_file
+    # If everything is going well, then convert the text into a tuple of integers
+    if not IP_WEB_FAIL and page.status_code >= 200 and page.status_code <= 299:
+        try:
+            web_ip = tuple([int(this) for this in iptext.split('.')])
+            if len(web_ip)!=4:
+                raise Exception()
+        except:
+            IP_WEB_FAIL = True
+            IP_WEB_MESSAGE = "Found nonsense IP address: %s"%iptext
+    # If the status code wasn't 200
+    elif not IP_WEB_FAIL:
+        IP_WEB_FAIL = True
+        IP_WEB_MESSAGE = ip_page.content
 
     if verbose:
-        if IP_UPDATE_FAIL:
+        if IP_WEB_FAIL:
             sys.stdout.write("[FAILED]\n")
         else:
-            sys.stdout.write("[done]\n")
+            sys.stdout.write(iptext + "\n")
 
-# Update the DDNS
-DNS_UPDATE_FAIL = False
-DNS_UPDATE_MESSAGE = ''
-# Update the DDNS ONLY if 
-# (1) there has been a change (IP_CHANGE is True)
-#     This prevents nomad from banging away on the ZoneEdit DDNS service
-#     pointlessly.
-# (2) the cache update succeeded (IP_UPDATE_FAIL is False)
-#     This prevents a file write permission error from fooling nomad into 
-#     believing that there has been a change in IP every time it checks.
-# (3) the debug flag was not set
-if IP_CHANGE and not IP_UPDATE_FAIL and not config_dict['debug']:
+    # Log a web lookup failure
+    if IP_WEB_FAIL:
+        logf.write(time.strftime(timefmt) + 'Failed to obtain IP address\n')
+        logf.write(IP_WEB_MESSAGE + '\n')
+
+    # Get the Former IP address from the cached IP file
+    IP_CACHE_FAIL = False
+    IP_CACHE_MESSAGE = ''
+    IP_CHANGE = False
     if verbose:
-        sys.stdout.write("Updating the ZoneEdit DNS record...")
-    url = 'https://dynamic.zoneedit.com/auth/dynamic.html' + 
-          '?host=%s&dnsto=%s'%(host,ip)
-    host = config_dict['domain']
-    ip = '%d.%d.%d.%d'%web_ip
-    try:
-        page = requests.get( url + '?host=%s&dnsto=%s'%(host,ip),
-            auth = (config_dict['user'], config_dict['passwd']))
-    except:
-        DNS_UPDATE_FAIL = True
-        DNS_UPDATE_MESSAGE = sys.exc_info()[1].message
+        sys.stdout.write("Checking cached IP address...")
+    # Does the ip cache file exist?
+    if os.access(ip_file,os.F_OK):
+        try:
+            # Read the old IP address and convert it into a tuple
+            with open(ip_file,'r') as ff:
+                iptext = ff.read()
+            cache_ip = tuple([int(this) for this in iptext.split('.')])
+        except:
+            IP_CACHE_FAIL = True
+            IP_CACHE_MESSAGE = 'Failed to open file %s'%ip_file
+            
+        # Compare the new IP to the old IP
+        if not (IP_WEB_FAIL or IP_CACHE_FAIL):
+            IP_CHANGE = cache_ip != web_ip
+            
+    # If there is no IP history, then default to a change
+    else:
+        IP_CHANGE = True
+
+    if verbose:
+        if IP_CACHE_FAIL:
+            sys.stdout.write("[FAILED]\n")
+        else:
+            sys.stdout.write(iptext + '\n')
+        if IP_CHANGE:
+            sys.stdout.write("CHANGE DETECTED\n")
+
+    # Update the cache IP address
+    IP_UPDATE_FAIL = False
+    IP_UPDATE_MESSAGE = ''
+    # Update the IP file ONLY if there is something meaningful to put in its place
+    if IP_CHANGE and not IP_WEB_FAIL:
+        if verbose:
+            sys.stdout.write("Updating IP cache...")
+        try:
+            with open(ip_file,'w') as ff:
+                ff.write('%d.%d.%d.%d'%web_ip)
+        except:
+            IP_UPDATE_FAIL = True
+            IP_UPDATE_MESSAGE = 'Failed to write IP cache: %s'%ip_file
+
+        if verbose:
+            if IP_UPDATE_FAIL:
+                sys.stdout.write("[FAILED]\n")
+            else:
+                sys.stdout.write("[done]\n")
+
+    # Log a change in IP address
+    if IP_UPDATE_FAIL:
+        logf.write(time.strftime(timefmt) + 
+            IP_UPDATE_MESSAGE)
+        sys.stderr.write(IP_UPDATE_MESSAGE)
+        exit(-1)
+
+    # Update the DDNS
+    DNS_UPDATE_FAIL = False
+    DNS_UPDATE_MESSAGE = ''
+    # Update the DDNS if 
+    # (1) there has been a change (IP_CHANGE is True)
+    #     This prevents nomad from banging away on the ZoneEdit DDNS service
+    #     pointlessly.
+    # (2) the cache update succeeded (IP_UPDATE_FAIL is False)
+    #     This prevents a file write permission error from fooling nomad into 
+    #     believing that there has been a change in IP every time it checks.
+    # (3) the debug flag was not set
+    if (force or (IP_CHANGE and not IP_UPDATE_FAIL)) and not debug:
+        if verbose:
+            sys.stdout.write("Updating the ZoneEdit DNS record...")
+        host = config_dict['domain']
+        ip = '%d.%d.%d.%d'%web_ip
+        url = 'https://dynamic.zoneedit.com/auth/dynamic.html' + \
+              '?host=%s&dnsto=%s'%(host,ip)
+        try:
+            page = requests.get( url + '?host=%s&dnsto=%s'%(host,ip),
+                auth = (config_dict['user'], config_dict['passwd']))
+        except:
+            DNS_UPDATE_FAIL = True
+            DNS_UPDATE_MESSAGE = sys.exc_info()[1].message
+
+        # If communication was successful, test the server response
+        if not DNS_UPDATE_FAIL:
+            DNS_UPDATE_MESSAGE = page.content
+            if page.status_code < 200 or page.status_code > 299:
+                DNS_UPDATE_FAIL = True
+            elif 'SUCCESS' not in page.content:
+                DNS_UPDATE_FAIL = True
+
+        if verbose:
+            if DNS_UPDATE_FAIL:
+                sys.stdout.write("[FAILED]\n")
+            else:
+                sys.stdout.write("[success]\n")
+
+        if DNS_UPDATE_FAIL:
+            logf.write(time.strftime(timefmt) + 
+                '--> DNS UPDATE FAILURE!\n%s\n'%DNS_UPDATE_MESSAGE)
+        else:
+            logf.write(time.strftime(timefmt) + 
+                'Updated DNS record.\n%s\n'%DNS_UPDATE_MESSAGE)
 
 
-#r = requests.get('https://dynamic.zoneedit.com/auth/dynamic.html?host=omnifariousbox.com&dnsto=72.45.43.82', auth=('CMartin40','3C9E25201D37AD9C'))
+    # The password is no longer needed.  Delete it from memory.
+    del config_dict['passwd']
+
+    #r = requests.get('https://dynamic.zoneedit.com/auth/dynamic.html?host=omnifariousbox.com&dnsto=72.45.43.82', auth=('CMartin40','3C9E25201D37AD9C'))
 
 exit(0)
