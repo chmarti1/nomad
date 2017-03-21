@@ -74,13 +74,6 @@ CONFIGURING THE BEHAVIOR OF NOMAD
     Set by the *domain* directive in the config file
     domain = 'mydomain.com'
 
--i or --interval
-    Sets the interval over which to check the ip address in minutes.
-    -i120 --interval 120
-    Set by the *interval* directive in the config file
-    interval = 120
-    The interval option is ignored unless the --update flag is set
-
 --timefmt
     Sets the time format string used when logging.  The format string is
     passed verbatim to the python time.strftime() function to generate 
@@ -114,7 +107,6 @@ config_dict = {
 'domain':None,
 'user':None,
 'passwd':None,
-'interval':120,
 'cachedir':'/var/cache/nomad',
 'timefmt':'[%D %T]',
 'config':'/etc/nomad.conf',
@@ -198,7 +190,6 @@ ip_file = os.path.join(config_dict['cachedir'],'ip')
 verbose = bool(config_dict['verbose'])
 debug = bool(config_dict['debug'])
 force = bool(config_dict['force'])
-inetrval = int(config_dict['interval'])
 timefmt = config_dict['timefmt']
 update = '--update' in clopt_flags
 
@@ -272,7 +263,6 @@ with open(log_file, 'a') as logf:
     IP_CACHE_FAIL = False
     IP_CACHE_MESSAGE = ''
     IP_CHANGE = False
-    INTERVAL_CHANGE = False
     if verbose:
         sys.stdout.write("Checking cached IP address...")
     # Does the ip cache file exist?
@@ -280,9 +270,8 @@ with open(log_file, 'a') as logf:
         try:
             # Read the old IP address and convert it into a tuple
             with open(ip_file,'r') as ff:
-                iptext,intervaltext = ff.read().split()
+                iptext = ff.read()
             cache_ip = tuple([int(this) for this in iptext.split('.')])
-            cache_interval = int(intervaltext)
         except:
             IP_CACHE_FAIL = True
             IP_CACHE_MESSAGE = 'Failed to open file %s'%ip_file
@@ -290,9 +279,6 @@ with open(log_file, 'a') as logf:
         # Compare the new IP to the old IP
         if not (IP_WEB_FAIL or IP_CACHE_FAIL):
             IP_CHANGE = cache_ip != web_ip
-        # Compare the new interval to the old interval
-        if not IP_CACHE_FAIL:
-            INTERVAL_CHANGE = cache_interval != interval
             
     # If there is no IP history, then default to a change
     else:
