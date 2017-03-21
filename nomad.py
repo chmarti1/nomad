@@ -11,8 +11,8 @@ date = 'March 2017'
 # Parse the command-line options
 clopt = getopt.getopt(sys.argv[1:],
                       'upcCD:hvdf',
-                      ['help', 'verbose', 'debug', 'force',
-                      'domain=', 'user=', 'passwd=', 'config=', 
+                      ['help', 'verbose', 'debug', 'force', 'remove',
+                      'domain=', 'user=', 'passwd=', 'config=',
                       'cachedir=', 'timefmt='])
 
 # Transform the output of getopt() into a dictionary
@@ -37,36 +37,61 @@ ZONEEDIT LOGIN OPTIONS
 -u or --user
     Sets the username used to log in to ZoneEdit
     -uUSERNAME  or  --user USERNAME
+    Set by the *user* directive in the config file
+    user = 'USERNAME'
     
 -p or --passwd
     Sets the plaintext password or token used to log in to ZoneEdit.
     Your administrative password will work, but you should use a login 
     token for security.  
     -pTOKEN  or  --passwd TOKEN
+    Set by the *passwd* directive in the config file
+    passwd = 'TOKEN'
 
 CONFIGURING THE BEHAVIOR OF NOMAD
 -f or --force
     If this flag is found, then a DNS update will be forced regardless 
     of the result of the comparison against the cached ip file.
+    Set by the *force* directive in the config file
+    force = True or force = False
 
 -c or --config
     Sets the nomad configuration file 
-    -c/etc/nomad_config.py  or  --config /etc/nomad_config.py    
+    -c/etc/nomad_config.py  or  --config /etc/nomad_config.py
+    Set by the *config* directive in the config file
+    config = '/etc/nomad_config.py'
 
 -C or --cachedir
     Sets the directory where the ip and log files are stored.  nomad 
     needs rwx permissions here.  Ending / is not mandatory.
     -d/var/cache/nomad/  or  --cachedir /var/cache/nomad/
+    Set by the *cachedir* directive in the config file
+    cachedir = '/var/cache/nomad'
 
 -D or --domain
     Sets the domain whose IP should be updated.
     -Dmydomain.com --domain mydomain.com
+    Set by the *domain* directive in the config file
+    domain = 'mydomain.com'
+
+-i or --interval
+    Sets the interval over which to check the ip address in minutes.
+    -i120 --interval 120
+    Set by the *interval* directive in the config file
+    interval = 120
+    The interval option is ignored unless the --update flag is set
 
 --timefmt
     Sets the time format string used when logging.  The format string is
     passed verbatim to the python time.strftime() function to generate 
     the time stamp.
     --timefmt '[%D %T]'
+    Set by the *timefmt* directive in the config file 
+    timefmt = '[%D %T]'
+
+--update
+    Update the poling interval in crontab and exit without performing any
+    of the usual checks or actions.
 
 DEBUGGING OPTIONS
 Debugging should usually be done using the -dv options together.
@@ -89,9 +114,10 @@ config_dict = {
 'domain':None,
 'user':None,
 'passwd':None,
+'interval':120,
 'cachedir':'/var/cache/nomad',
 'timefmt':'[%D %T]',
-'config':'/etc/nomad_config.py',
+'config':'/etc/nomad.conf',
 'debug':False,
 'force':False,
 'verbose':False
@@ -172,7 +198,9 @@ ip_file = os.path.join(config_dict['cachedir'],'ip')
 verbose = bool(config_dict['verbose'])
 debug = bool(config_dict['debug'])
 force = bool(config_dict['force'])
+inetrval = int(config_dict['interval'])
 timefmt = config_dict['timefmt']
+update = '--update' in clopt_flags
 
 # Before we go mucking about with files, be verbose to help with any debugging
 # in case something breaks accessing the cache files
@@ -244,6 +272,7 @@ with open(log_file, 'a') as logf:
     IP_CACHE_FAIL = False
     IP_CACHE_MESSAGE = ''
     IP_CHANGE = False
+    INTERVAL_CHANGE = False
     if verbose:
         sys.stdout.write("Checking cached IP address...")
     # Does the ip cache file exist?
@@ -251,8 +280,9 @@ with open(log_file, 'a') as logf:
         try:
             # Read the old IP address and convert it into a tuple
             with open(ip_file,'r') as ff:
-                iptext = ff.read()
+                iptext,intervaltext = ff.read().split()
             cache_ip = tuple([int(this) for this in iptext.split('.')])
+            cache_interval = int(intervaltext)
         except:
             IP_CACHE_FAIL = True
             IP_CACHE_MESSAGE = 'Failed to open file %s'%ip_file
@@ -260,10 +290,14 @@ with open(log_file, 'a') as logf:
         # Compare the new IP to the old IP
         if not (IP_WEB_FAIL or IP_CACHE_FAIL):
             IP_CHANGE = cache_ip != web_ip
+        # Compare the new interval to the old interval
+        if not IP_CACHE_FAIL:
+            INTERVAL_CHANGE = cache_interval != interval
             
     # If there is no IP history, then default to a change
     else:
         IP_CHANGE = True
+        INTERVAL_CHANGE = True
 
     if verbose:
         if IP_CACHE_FAIL:
@@ -271,7 +305,7 @@ with open(log_file, 'a') as logf:
         else:
             sys.stdout.write(iptext + '\n')
         if IP_CHANGE:
-            sys.stdout.write("CHANGE DETECTED\n")
+            sys.stdout.write("IP Changed.\n")
 
     # Update the cache IP address
     IP_UPDATE_FAIL = False
@@ -283,6 +317,8 @@ with open(log_file, 'a') as logf:
         try:
             with open(ip_file,'w') as ff:
                 ff.write('%d.%d.%d.%d'%web_ip)
+            cmd = 'chmod 644 %s'%ip_file
+            os.system(cmd)
         except:
             IP_UPDATE_FAIL = True
             IP_UPDATE_MESSAGE = 'Failed to write IP cache: %s'%ip_file
@@ -349,7 +385,5 @@ with open(log_file, 'a') as logf:
 
     # The password is no longer needed.  Delete it from memory.
     del config_dict['passwd']
-
-    #r = requests.get('https://dynamic.zoneedit.com/auth/dynamic.html?host=omnifariousbox.com&dnsto=72.45.43.82', auth=('CMartin40','3C9E25201D37AD9C'))
 
 exit(0)
