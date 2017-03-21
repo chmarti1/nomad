@@ -258,6 +258,8 @@ with open(log_file, 'a') as logf:
     if IP_WEB_FAIL:
         logf.write(time.strftime(timefmt) + 'Failed to obtain IP address\n')
         logf.write(IP_WEB_MESSAGE + '\n')
+    else:
+        logf.write(time.strftime(timefmt) + 'Found IP address %s\n'%iptext)
 
     # Get the Former IP address from the cached IP file
     IP_CACHE_FAIL = False
