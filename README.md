@@ -26,3 +26,5 @@ $nomad --help
 ```
 for a detailed description of the configuration options.
 
+After installation, the configuration file is located at `/etc/nomad.conf` by default.  It will be read in each time nomad executes.
+
