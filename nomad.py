@@ -10,7 +10,7 @@ date = 'March 2017'
 
 # Parse the command-line options
 clopt = getopt.getopt(sys.argv[1:],
-                      'upcCD:hvdf',
+                      'upcCD:hvdfL',
                       ['help', 'verbose', 'debug', 'force', 'remove',
                       'domain=', 'user=', 'passwd=', 'config=',
                       'cachedir=', 'timefmt='])
@@ -96,6 +96,14 @@ Debugging should usually be done using the -dv options together.
     
 -v or --verbose
     Prints the behavior of nomad to the screen for debugging.
+
+-L
+    Log more heavily than usual.  By default, only errors that need 
+    attention or DNS updates will be logged.  When the -L flag is set
+    the result of each IP check will be logged.  This can be useful to
+    verify that the regular checks are happening correctly.
+    Set by the *heavylog* directive in the config file
+    heavylog = True
     
 (c) 2017 Christopher R. Martin
 """)
@@ -110,6 +118,7 @@ config_dict = {
 'cachedir':'/var/cache/nomad',
 'timefmt':'[%D %T]',
 'config':'/etc/nomad.conf',
+'heavylog':False,
 'debug':False,
 'force':False,
 'verbose':False
@@ -182,6 +191,7 @@ set_config('user',['-u','--user'])
 set_config('passwd',['-p','--passwd'])
 set_config('cachedir',['-C','--cachedir'])
 set_config('timefmt',['--timefmt'])
+set_config('heavylog',['-L'])
 
 # Build the log and IP file names
 cache_dir = config_dict['cachedir']
@@ -190,6 +200,7 @@ ip_file = os.path.join(config_dict['cachedir'],'ip')
 verbose = bool(config_dict['verbose'])
 debug = bool(config_dict['debug'])
 force = bool(config_dict['force'])
+heavylog = bool(config_dict['heavylog'])
 timefmt = config_dict['timefmt']
 update = '--update' in clopt_flags
 
@@ -258,8 +269,8 @@ with open(log_file, 'a') as logf:
     if IP_WEB_FAIL:
         logf.write(time.strftime(timefmt) + 'Failed to obtain IP address\n')
         logf.write(IP_WEB_MESSAGE + '\n')
-    else:
-        logf.write(time.strftime(timefmt) + 'Found IP address %s\n'%iptext)
+    elif heavylog:
+        logf.write(time.strftime(timefmt) + 'Current IP address %s\n'%iptext)
 
     # Get the Former IP address from the cached IP file
     IP_CACHE_FAIL = False
@@ -281,11 +292,15 @@ with open(log_file, 'a') as logf:
         # Compare the new IP to the old IP
         if not (IP_WEB_FAIL or IP_CACHE_FAIL):
             IP_CHANGE = cache_ip != web_ip
+
+        if heavylog and not IP_CACHE_FAIL:
+            logf.write(time.strftime(timefmt) + 'Cached IP address %s\n'%iptext)
             
     # If there is no IP history, then default to a change
     else:
         IP_CHANGE = True
         INTERVAL_CHANGE = True
+        logf.write(time.strftime(timefmt) + 'IP cache not found: %s\n'%ip_file)
 
     if verbose:
         if IP_CACHE_FAIL:
@@ -317,7 +332,7 @@ with open(log_file, 'a') as logf:
             else:
                 sys.stdout.write("[done]\n")
 
-    # Log a change in IP address
+    # A failure to update the IP cache is fatal.  Log it and exit with an error.
     if IP_UPDATE_FAIL:
         logf.write(time.strftime(timefmt) + 
             IP_UPDATE_MESSAGE)
@@ -337,7 +352,10 @@ with open(log_file, 'a') as logf:
     # (3) the debug flag was not set
     if (force or (IP_CHANGE and not IP_UPDATE_FAIL)) and not debug:
         if verbose:
-            sys.stdout.write("Updating the ZoneEdit DNS record...")
+            if force:
+                sys.stdout.write('Forcing an update to the ZoneEdit NDS Record...')
+            else:
+                sys.stdout.write("Updating the ZoneEdit DNS record...")
         host = config_dict['domain']
         ip = '%d.%d.%d.%d'%web_ip
         url = 'https://dynamic.zoneedit.com/auth/dynamic.html' + \
@@ -366,12 +384,14 @@ with open(log_file, 'a') as logf:
         if DNS_UPDATE_FAIL:
             logf.write(time.strftime(timefmt) + 
                 '--> DNS UPDATE FAILURE!\n%s\n'%DNS_UPDATE_MESSAGE)
+        elif force:
+            logf.write(time.strftime(timefmt) +
+                'Forced a DNS update.\n%s\n'%DNS_UPDATE_MESSAGE)
         else:
             logf.write(time.strftime(timefmt) + 
                 'Updated DNS record.\n%s\n'%DNS_UPDATE_MESSAGE)
 
-
-    # The password is no longer needed.  Delete it from memory.
+    # The password is no longer needed.  Delete it.
     del config_dict['passwd']
 
 exit(0)

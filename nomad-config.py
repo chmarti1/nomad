@@ -63,3 +63,9 @@ config = '/etc/nomad.conf'
 # is shorthand for '%m/%d/%y %H:%M:%S'
 timefmt = '[%D %T]'
 
+# heavylog is used to adjust the amount of logging performed by nomad.  By
+# default, only DNS changes and important errors are logged, but setting 
+# heavylog to True can be helpful to verify that nomad is correctly performing
+# its regular checks.
+heavylog = False
+#
